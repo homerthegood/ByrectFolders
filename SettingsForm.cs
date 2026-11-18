@@ -12,11 +12,12 @@ internal sealed class SettingsForm : Form
     private readonly TextBox _path = new();
     private readonly ShortcutBox _itemHotkey = new();
     private readonly ShortcutBox _menuHotkey = new();
-    private readonly CheckBox _middleClick = new() { Text = "바탕화면·탐색기·파일 대화상자 위 휠 클릭으로 메뉴 호출", AutoSize = true };
-    private readonly CheckBox _showOpen = new() { Text = "열린 탐색기 폴더를 메뉴에 표시", AutoSize = true };
+    private readonly CheckBox _middleClick = new ToggleSwitch();
+    private readonly CheckBox _showOpen = new ToggleSwitch();
     private readonly Label _status = new() { AutoSize = true, ForeColor = Theme.Red };
     private readonly Label _count = new() { AutoSize = true, ForeColor = Theme.Blue };
-    private readonly ComboBox _theme = new() { DropDownStyle = ComboBoxStyle.DropDownList };
+    private readonly SegmentedTabs _theme = new(Theme.All.Select(p => p.Label).ToArray());
+    private readonly HashSet<FavoriteItem> _missing = new(); // 경로를 찾을 수 없는 항목(목록에서 빨갛게 표시)
     private bool _loadingFields;
 
     public SettingsForm(Settings settings)
@@ -40,7 +41,7 @@ internal sealed class SettingsForm : Form
         _menuHotkey.Text = HotkeyParser.Normalize(settings.Hotkey) ?? settings.Hotkey;
         _middleClick.Checked = settings.MiddleClick;
         _showOpen.Checked = settings.ShowOpenFolders;
-        _theme.SelectedIndex = Math.Max(0, Array.FindIndex(Theme.All, p => string.Equals(p.Name, settings.Theme, StringComparison.OrdinalIgnoreCase)));
+        _theme.Selected = Math.Max(0, Array.FindIndex(Theme.All, p => string.Equals(p.Name, settings.Theme, StringComparison.OrdinalIgnoreCase)));
         UpdateFields();
         _current = TakeSnapshot(); // 실행 취소 기준점(불러온 상태)
         _savedData = _current.Data;
@@ -91,14 +92,15 @@ internal sealed class SettingsForm : Form
         bottom.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         bottom.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         bottom.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        var help = Btn("? 도움말", () => ShowHelp(tabs.Selected), ButtonKind.Normal, 96);
+        var help = Btn("도움말", () => ShowHelp(tabs.Selected), ButtonKind.Quiet, 96, ButtonGlyph.Help);
         help.Margin = new Padding(0, 0, S(12), 0);
         bottom.Controls.Add(help, 0, 0);
         _status.Anchor = AnchorStyles.Left;
         _status.BackColor = Color.Transparent; // 바탕 그라데이션 위에 글자만
         bottom.Controls.Add(_status, 1, 0);
         var cancel = Btn("닫기", Close, ButtonKind.Normal, 96);
-        var save = Btn("저장", () => Save(), ButtonKind.Primary, 96);
+        var save = _saveButton = Btn("저장", () => Save(), ButtonKind.Primary, 96);
+        save.Enabled = false; // 저장할 변경이 생기면 켜진다(SyncSave)
         bottom.Controls.Add(cancel, 2, 0);
         bottom.Controls.Add(save, 3, 0);
 
@@ -131,8 +133,8 @@ internal sealed class SettingsForm : Form
     private static readonly HelpDialog.Section[] FavoritesHelp =
     {
         new("추가",
-            "＋ 폴더 추가: 폴더를 골라 목록에 추가합니다. 선택한 항목 바로 아래(그룹이면 그 안)에 들어갑니다.",
-            "열린 탐색기에서 ▾: 지금 열려 있는 탐색기 폴더 중 하나를 골라 추가합니다.",
+            "폴더 추가: 폴더를 골라 목록에 추가합니다. 선택한 항목 바로 아래(그룹이면 그 안)에 들어갑니다.",
+            "열린 탐색기에서: 지금 열려 있는 탐색기 폴더 중 하나를 골라 추가합니다.",
             "메뉴의 '여기 추가...': 탐색기·파일 대화상자·바탕화면에서 메뉴를 불러 현재 폴더를 바로 추가합니다.",
             "그룹: 메뉴에서 하위 메뉴로 표시됩니다. 여러 항목을 선택한 상태에서 누르면 선택한 항목들이 새 그룹 안으로 들어갑니다. 새 그룹은 만들자마자 목록에서 바로 이름을 입력할 수 있습니다.",
             "구분선: 메뉴에 가로줄을 넣습니다."),
@@ -142,13 +144,13 @@ internal sealed class SettingsForm : Form
         new("순서·그룹 정리",
             "항목을 끌어 놓으면 놓은 항목 앞으로 이동하고, 그룹 위에 놓으면 그룹 안으로 들어갑니다. 여러 개 선택한 상태에서 끌면 함께 이동합니다.",
             "선택된(파랗게 표시된) 항목은 이름 위가 아니어도 행의 어느 곳을 잡아 끌어도 됩니다.",
-            "▲▼ 버튼으로 한 칸씩 옮길 수 있습니다."),
+            "위·아래 화살표 버튼으로 한 칸씩 옮길 수 있습니다."),
         new("우클릭 메뉴",
             "항목 하나: 이름 바꾸기(F2), 경로 바꾸기, 단축키 지정, 그룹 풀기, 그룹으로 묶기, 그룹으로 이동, 삭제(Del).",
             "여러 개: 그룹으로 묶기, 그룹으로 이동, 경로 일괄 바꾸기, 삭제.",
             "그룹으로 묶기는 첫 항목 자리에 '새 그룹'을 만들고 바로 이름을 입력하는 상태가 됩니다.",
             "경로 일괄 바꾸기는 드라이브 문자나 상위 폴더가 바뀌었을 때 경로의 일부를 한꺼번에 바꿉니다."),
-        new("선택한 항목",
+        new("항목 편집(오른쪽 패널)",
             "이름: 메뉴에 표시되는 이름입니다. 목록에서 F2를 누르거나 선택된 항목의 이름을 한 번 더 클릭하면 그 자리에서 바로 바꿀 수 있습니다(Enter 확정, Esc 취소).",
             "경로: %USERPROFILE% 같은 환경 변수를 쓸 수 있으며, 실제 경로가 아래에 표시됩니다. 없는 경로는 목록에서 빨간색으로 표시됩니다.",
             "단축키: 칸을 클릭한 뒤 조합키(예: Ctrl+Alt+1)를 누르면 입력되고, Backspace나 '지우기'로 지웁니다. 누르면 메뉴 없이 해당 폴더로 바로 이동합니다."),
@@ -174,7 +176,7 @@ internal sealed class SettingsForm : Form
             "위에서부터 처음 맞는 규칙 하나만 적용됩니다. 조건이 구체적인 규칙(제목 포함 지정 등)을 위에 두십시오.",
             "같은 대화상자에서는 한 번만 이동하므로, 대화상자가 뜬 뒤 직접 옮긴 폴더는 되돌리지 않습니다."),
         new("편집",
-            "＋ 추가로 새 규칙, 편집 또는 더블클릭으로 수정, ▲▼로 순서 변경, 삭제로 제거합니다.",
+            "규칙 추가로 새 규칙, 편집 또는 더블클릭으로 수정, 위·아래 화살표로 순서 변경, 삭제로 제거합니다.",
             "변경 내용은 '저장'을 눌러야 반영됩니다."),
     };
 
@@ -203,49 +205,52 @@ internal sealed class SettingsForm : Form
 
     private Panel Page() => new CanvasPanel { Dock = DockStyle.Fill };
 
-    /// <summary>제목이 있는 흰 타일.</summary>
-    private TilePanel Tile(string? title, out Panel body, Control? titleExtra = null)
+    /// <summary>둥근 유리 패널. quiet=true면 그림자 없는 옅은 보조 패널(안의 컨트롤 바탕색은 tile.Fill에 맞춘다).</summary>
+    private TilePanel Tile(out Panel body, bool quiet = false)
     {
         int sh = TilePanel.ShadowPad(this); // 유리 테마: 그림자 자리만큼 안쪽 여백을 더한다
-        var tile = new TilePanel { Dock = DockStyle.Fill, Padding = new Padding(S(18) + sh, S(14) + sh, S(18) + sh, S(16) + sh * 2), Margin = Padding.Empty };
-        body = new Panel { Dock = DockStyle.Fill, BackColor = Theme.Tile };
+        var tile = new TilePanel { Dock = DockStyle.Fill, Quiet = quiet, Padding = new Padding(S(18) + sh, S(16) + sh, S(18) + sh, S(16) + sh * 2), Margin = Padding.Empty };
+        body = new Panel { Dock = DockStyle.Fill, BackColor = tile.Fill };
         tile.Controls.Add(body);
-        if (title != null)
-        {
-            var head = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = false, BackColor = Theme.Tile, Margin = Padding.Empty, Padding = new Padding(0, 0, 0, S(8)) };
-            var titleFont = Theme.UiFont(12.5f);
-            if (Theme.Glass) // 제목 앞 강조 막대
-                head.Controls.Add(new AccentBar { Size = new Size(S(22), S(4)), Margin = new Padding(0, (titleFont.Height - S(4)) / 2 + S(1), S(9), 0) });
-            head.Controls.Add(new Label { Text = title, AutoSize = true, Font = titleFont, ForeColor = Theme.Ink, Margin = new Padding(0, 0, S(6), 0) });
-            if (titleExtra != null)
-            {
-                titleExtra.Margin = new Padding(0, S(5), 0, 0);
-                head.Controls.Add(titleExtra);
-            }
-            tile.Controls.Add(head);
-        }
         return tile;
     }
+
+    // 편집 패널(오른쪽): 선택한 항목의 이름이 제목이 되고, 항목 종류에 맞는 칸만 보인다.
+    private readonly Label _heading = new() { AutoEllipsis = true, UseMnemonic = false };
+    private readonly List<Control> _nameRow = new(), _pathRow = new(), _hotkeyRow = new();
+    private Control _deleteButton = null!, _multiPanel = null!;
+    private ThemeButton _saveButton = null!;
 
     private void BuildFavoritesTab(Panel page)
     {
         var grid = new CanvasTable { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 56));
-        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 44));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 63));
+        grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 37));
         grid.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
-        // 왼쪽 타일: 도구 모음 + 목록
-        var left = Tile("즐겨찾기", out var leftBody, _count);
-        left.Margin = new Padding(0, 0, S(7), 0);
-        var tools = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, BackColor = Theme.Tile, Margin = Padding.Empty, Padding = new Padding(0, 0, 0, S(8)) };
-        tools.Controls.Add(Btn("＋ 폴더 추가", AddFolder, ButtonKind.Normal));
-        var fromExplorer = Btn("열린 탐색기에서 ▾", () => { }, ButtonKind.Normal);
+        // 왼쪽(주 패널): 도구 모음 + 목록. 탭 이름과 겹치는 제목은 두지 않는다.
+        var left = Tile(out var leftBody);
+        left.Margin = new Padding(0, 0, S(5), 0);
+        var bar = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, BackColor = Theme.Tile, Margin = Padding.Empty, Padding = new Padding(0, 0, 0, S(10)) };
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        bar.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        var tools = new FlowLayoutPanel { AutoSize = true, WrapContents = false, BackColor = Theme.Tile, Margin = Padding.Empty };
+        tools.Controls.Add(Btn("폴더 추가", AddFolder, ButtonKind.Normal, glyph: ButtonGlyph.Plus));
+        var fromExplorer = Btn("열린 탐색기에서", () => { }, ButtonKind.Normal, glyph: ButtonGlyph.CaretDown);
         fromExplorer.Click += (_, _) => ShowExplorerMenu(fromExplorer);
         tools.Controls.Add(fromExplorer);
         tools.Controls.Add(Btn("그룹", AddGroup, ButtonKind.Quiet));
         tools.Controls.Add(Btn("구분선", AddSeparator, ButtonKind.Quiet));
-        tools.Controls.Add(Arrow("▲", () => MoveSelected(-1)));
-        tools.Controls.Add(Arrow("▼", () => MoveSelected(1)));
+        var up = Arrow(ButtonGlyph.Up, () => MoveSelected(-1));
+        up.Margin = new Padding(S(8), 0, 0, 0);
+        tools.Controls.Add(up);
+        tools.Controls.Add(Arrow(ButtonGlyph.Down, () => MoveSelected(1)));
+        bar.Controls.Add(tools, 0, 0);
+        _count.Font = Theme.DataFont(9f);
+        _count.ForeColor = Theme.Faint;
+        _count.Anchor = AnchorStyles.Right;
+        _count.Margin = new Padding(0, 0, S(4), 0);
+        bar.Controls.Add(_count, 1, 0);
 
         int icon = S(16);
         _icons.ImageSize = new Size(icon, icon);
@@ -253,48 +258,77 @@ internal sealed class SettingsForm : Form
         _icons.Images.Add(new Bitmap(icon, icon));                                     // 1: 없음(구분선)
         _tree.ImageList = _icons;
         _tree.Dock = DockStyle.Fill;
-        _tree.ItemHeight = S(28);
+        _tree.ItemHeight = S(32);
         _tree.ShowLines = false;
         _tree.ShowRootLines = true;
         _tree.BorderStyle = BorderStyle.None;
         _tree.BackColor = Theme.Tile;
         _tree.ForeColor = Theme.Text;
+        _tree.IsMissing = n => n.Tag is FavoriteItem i && _missing.Contains(i);
         Theme.ExplorerStyle(_tree);
         leftBody.Controls.Add(_tree);
-        leftBody.Controls.Add(tools);
+        leftBody.Controls.Add(bar);
 
-        // 오른쪽 타일: 선택한 항목
-        var right = Tile("선택한 항목", out var rightBody);
-        right.Margin = new Padding(S(7), 0, 0, 0);
-        var form = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, AutoSize = true, BackColor = Theme.Tile };
+        // 오른쪽(보조 패널): 선택한 항목 편집
+        var right = Tile(out var rightBody, quiet: true);
+        right.Margin = new Padding(S(5), 0, 0, 0);
+        var fill = right.Fill;
+
+        _heading.Dock = DockStyle.Top;
+        _heading.Font = Theme.UiFont(13f);
+        _heading.ForeColor = Theme.Ink;
+        _heading.BackColor = fill;
+        _heading.Height = _heading.Font.Height + S(8);
+
+        var form = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 2, AutoSize = true, BackColor = fill };
         form.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         form.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        T Add<T>(List<Control>? group, T c, int col, int row, bool span = false) where T : Control
+        {
+            form.Controls.Add(c, col, row);
+            if (span) form.SetColumnSpan(c, 2);
+            group?.Add(c);
+            return c;
+        }
 
-        form.Controls.Add(Caption("이름"), 0, 0);
-        var nameBox = Input(_name);
-        form.Controls.Add(nameBox, 0, 1);
-        form.SetColumnSpan(nameBox, 2);
+        Add(_nameRow, Caption("이름"), 0, 0);
+        Add(_nameRow, Input(_name), 0, 1, span: true).Margin = Padding.Empty;
 
-        form.Controls.Add(Caption("경로"), 0, 2);
-        form.Controls.Add(Input(_path), 0, 3);
-        form.Controls.Add(Btn("찾아보기", BrowsePath, ButtonKind.Normal), 1, 3);
+        Add(_pathRow, Caption("경로"), 0, 2);
+        Add(_pathRow, Input(_path), 0, 3);
+        Add(_pathRow, Btn("찾아보기", BrowsePath, ButtonKind.Normal), 1, 3);
         _pathState.Margin = new Padding(S(2), S(4), 0, 0);
-        form.Controls.Add(_pathState, 0, 4);
-        form.SetColumnSpan(_pathState, 2);
+        _pathState.Font = Theme.DataFont(9f);
+        Add(null, _pathState, 0, 4, span: true);
 
-        form.Controls.Add(Caption("단축키"), 0, 5);
-        form.Controls.Add(Input(_itemHotkey), 0, 6);
-        form.Controls.Add(Btn("지우기", () => _itemHotkey.Text = "", ButtonKind.Quiet), 1, 6);
-        var delete = Btn("이 항목 삭제", DeleteSelected, ButtonKind.Danger);
-        delete.Margin = new Padding(0, S(18), 0, 0);
-        form.Controls.Add(delete, 0, 7);
+        Add(_hotkeyRow, Caption("단축키"), 0, 5);
+        Add(_hotkeyRow, Input(_itemHotkey), 0, 6);
+        Add(_hotkeyRow, Btn("지우기", () => _itemHotkey.Text = "", ButtonKind.Quiet), 1, 6);
+
+        var delete = Btn("삭제", DeleteSelected, ButtonKind.Danger, 72);
+        delete.Margin = new Padding(0, S(20), 0, 0);
+        _deleteButton = Add(null, delete, 0, 7);
+
+        // 여러 개 선택했을 때: 칸 대신 한꺼번에 할 수 있는 일만 보인다
+        var multi = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = fill, Padding = new Padding(0, S(8), 0, 0), Visible = false };
+        var group = Btn("그룹으로 묶기", () => GroupNodes(TopNodes(_tree.Picked)), ButtonKind.Normal, 150);
+        var replace = Btn("경로 일괄 바꾸기", () => ReplacePaths(TopNodes(_tree.Picked)), ButtonKind.Normal, 150);
+        var deleteAll = Btn("삭제", DeleteSelected, ButtonKind.Danger, 150);
+        foreach (var b in new[] { group, replace, deleteAll }) b.Margin = new Padding(0, 0, 0, S(8));
+        deleteAll.Margin = new Padding(0, S(10), 0, 0);
+        multi.Controls.AddRange(new Control[] { group, replace, deleteAll });
+        _multiPanel = multi;
+
+        rightBody.Controls.Add(multi);
         rightBody.Controls.Add(form);
+        rightBody.Controls.Add(_heading);
 
         grid.Controls.Add(left, 0, 0);
         grid.Controls.Add(right, 1, 0);
         page.Controls.Add(grid);
 
         _tree.AfterSelect += (_, _) => { UpdateFields(); SelectionMoved(); };
+        _tree.PickedChanged += () => { if (!_restoring) UpdateFields(); };
         _name.TextChanged += (_, _) => FieldChanged("name");
         _path.TextChanged += (_, _) => FieldChanged("path");
         _itemHotkey.TextChanged += (_, _) => FieldChanged("hotkey");
@@ -324,66 +358,67 @@ internal sealed class SettingsForm : Form
         };
     }
 
+    /// <summary>
+    /// 일반 탭: 패널 하나에 설정을 한 줄씩(이름 왼쪽, 조작 오른쪽). 줄 사이는 가는 선.
+    /// 창이 넓어도 이름과 조작이 멀어지지 않게 패널 폭을 제한한다.
+    /// </summary>
     private void BuildGeneralTab(Panel page)
     {
-        var stack = new CanvasTable { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 4 };
-        stack.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        stack.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        stack.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        stack.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var tile = Tile(out var body);
+        tile.Dock = DockStyle.None;
+        tile.AutoSize = true;
+        tile.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        tile.Location = Point.Empty;
+        tile.MinimumSize = new Size(S(640), 0);
+        tile.MaximumSize = new Size(S(640), 0);
+        body.Dock = DockStyle.Top;
+        body.AutoSize = true;
 
-        var menuTile = Tile("메뉴", out var menuBody);
-        menuTile.Dock = DockStyle.Top;
-        menuTile.AutoSize = true;
-        menuTile.Margin = new Padding(0, 0, 0, S(14));
-        menuBody.Dock = DockStyle.Top;
-        menuBody.AutoSize = true;
-        var g = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 1, AutoSize = true, BackColor = Theme.Tile };
-        g.Controls.Add(Caption("메뉴 호출 단축키"));
-        var hk = Input(_menuHotkey);
-        hk.Width = S(260);
-        hk.Dock = DockStyle.None;
-        g.Controls.Add(hk);
-        _menuHotkey.TextChanged += (_, _) => Commit("menuHotkey");
-        foreach (var cb in new[] { _middleClick, _showOpen })
+        var rows = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, BackColor = Theme.Tile, Margin = Padding.Empty };
+        rows.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        rows.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        int r = 0;
+        void Row(string title, string? detail, Control control)
         {
-            cb.CheckedChanged += (_, _) => Commit();
-            cb.BackColor = Theme.Tile;
-            cb.ForeColor = Theme.Text;
-            cb.Margin = new Padding(0, S(10), 0, 0);
-            g.Controls.Add(cb);
+            if (r > 0)
+            {
+                var line = new Panel { Height = 1, Dock = DockStyle.Fill, BackColor = Theme.P.Hairline, Margin = Padding.Empty };
+                rows.Controls.Add(line, 0, r);
+                rows.SetColumnSpan(line, 2);
+                r++;
+            }
+            var text = new FlowLayoutPanel { AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Theme.Tile, Anchor = AnchorStyles.Left, Margin = new Padding(0, S(13), S(16), S(13)) };
+            text.Controls.Add(new Label { Text = title, AutoSize = true, ForeColor = Theme.Ink, Margin = Padding.Empty, UseMnemonic = false });
+            if (detail != null)
+                text.Controls.Add(new Label { Text = detail, AutoSize = true, ForeColor = Theme.Muted, Font = Theme.DataFont(9f), Margin = new Padding(0, S(3), 0, 0), UseMnemonic = false });
+            control.Anchor = AnchorStyles.Right;
+            control.Margin = new Padding(0, S(8), 0, S(8));
+            rows.Controls.Add(text, 0, r);
+            rows.Controls.Add(control, 1, r);
+            r++;
         }
-        menuBody.Controls.Add(g);
 
-        var lookTile = Tile("화면", out var lookBody);
-        lookTile.Dock = DockStyle.Top;
-        lookTile.AutoSize = true;
-        lookTile.Margin = new Padding(0, 0, 0, S(14));
-        lookBody.Dock = DockStyle.Top;
-        lookBody.AutoSize = true;
-        var look = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 1, AutoSize = true, BackColor = Theme.Tile };
-        look.Controls.Add(Caption("테마"));
-        foreach (var p in Theme.All) _theme.Items.Add(p.Label);
-        var themeBox = Input(_theme);
-        themeBox.Width = S(260);
-        themeBox.Dock = DockStyle.None;
-        look.Controls.Add(themeBox);
-        _theme.SelectedIndexChanged += (_, _) => Commit();
-        lookBody.Controls.Add(look);
+        var hk = Input(_menuHotkey);
+        hk.Dock = DockStyle.None;
+        hk.Size = new Size(S(190), S(32));
+        Row("메뉴 호출 단축키", null, hk);
+        _menuHotkey.TextChanged += (_, _) => Commit("menuHotkey");
 
-        var importTile = Tile("가져오기", out var importBody);
-        importTile.Dock = DockStyle.Top;
-        importTile.AutoSize = true;
-        importBody.Dock = DockStyle.Top;
-        importBody.AutoSize = true;
-        var row = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, WrapContents = false, BackColor = Theme.Tile };
-        row.Controls.Add(Btn("Direct Folders에서 가져오기", ImportDirectFolders, ButtonKind.Normal));
-        importBody.Controls.Add(row);
+        _middleClick.AccessibleName = "휠 클릭으로 메뉴 호출";
+        _showOpen.AccessibleName = "열린 탐색기 폴더를 메뉴에 표시";
+        Row("휠 클릭으로 메뉴 호출", "바탕화면, 탐색기의 빈 곳, 파일 대화상자에서", _middleClick);
+        Row("열린 탐색기 폴더를 메뉴에 표시", null, _showOpen);
+        foreach (var cb in new[] { _middleClick, _showOpen }) cb.CheckedChanged += (_, _) => Commit();
 
-        stack.Controls.Add(menuTile, 0, 0);
-        stack.Controls.Add(lookTile, 0, 1);
-        stack.Controls.Add(importTile, 0, 2);
-        page.Controls.Add(stack);
+        _theme.Font = Font;
+        _theme.Size = _theme.GetPreferredSize(Size.Empty);
+        _theme.SelectedChanged += _ => Commit();
+        Row("테마", null, _theme);
+
+        Row("Direct Folders 즐겨찾기", null, Btn("가져오기", ImportDirectFolders, ButtonKind.Normal, 84));
+
+        body.Controls.Add(rows);
+        page.Controls.Add(tile);
     }
 
     /// <summary>입력칸 위의 작은 회색 이름표.</summary>
@@ -431,15 +466,29 @@ internal sealed class SettingsForm : Form
 
     private void BuildAppTab(Panel page)
     {
-        var tile = Tile("앱별 기본 폴더", out var body);
+        var tile = Tile(out var body);
         var note = new Label
         {
             Text = "위에서부터 처음 맞는 규칙 하나만 적용되며, 대화상자마다 한 번만 이동합니다.",
-            AutoSize = true, ForeColor = Theme.Muted, Dock = DockStyle.Top, Padding = new Padding(0, 0, 0, S(10)),
+            AutoSize = true, ForeColor = Theme.Muted, Font = Theme.DataFont(9f), Dock = DockStyle.Top, Padding = new Padding(0, S(8), 0, S(10)),
         };
         _rules.BackColor = Theme.Tile;
         _rules.ForeColor = Theme.Text;
         Theme.ExplorerStyle(_rules);
+        // 행 높이를 넉넉하게(빈 이미지 목록으로 높이만 지정), 머리글은 테마에 맞춰 직접 그린다
+        _rules.SmallImageList = new ImageList { ImageSize = new Size(1, S(28)) };
+        _rules.OwnerDraw = true;
+        var headFont = Theme.DataFont(9f);
+        _rules.DrawColumnHeader += (_, e) =>
+        {
+            using (var back = new SolidBrush(Theme.Tile)) e.Graphics.FillRectangle(back, e.Bounds);
+            TextRenderer.DrawText(e.Graphics, e.Header?.Text, headFont, new Rectangle(e.Bounds.X + S(6), e.Bounds.Y, e.Bounds.Width - S(8), e.Bounds.Height), Theme.Muted,
+                TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
+            using var line = new Pen(Theme.P.Hairline);
+            e.Graphics.DrawLine(line, e.Bounds.Left, e.Bounds.Bottom - 1, e.Bounds.Right, e.Bounds.Bottom - 1);
+        };
+        _rules.DrawItem += (_, e) => e.DrawDefault = true;
+        _rules.DrawSubItem += (_, e) => e.DrawDefault = true;
         _rules.Columns.Add("앱", S(160));
         _rules.Columns.Add("대화상자", S(90));
         _rules.Columns.Add("제목 포함", S(130));
@@ -449,10 +498,10 @@ internal sealed class SettingsForm : Form
         _rules.DoubleClick += (_, _) => EditRule();
 
         var buttons = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, BackColor = Theme.Tile, Padding = new Padding(0, S(10), 0, 0) };
-        buttons.Controls.Add(Btn("＋ 추가", AddRule, ButtonKind.Normal));
+        buttons.Controls.Add(Btn("규칙 추가", AddRule, ButtonKind.Normal, glyph: ButtonGlyph.Plus));
         buttons.Controls.Add(Btn("편집", EditRule, ButtonKind.Normal));
-        buttons.Controls.Add(Arrow("▲", () => MoveRule(-1)));
-        buttons.Controls.Add(Arrow("▼", () => MoveRule(1)));
+        buttons.Controls.Add(Arrow(ButtonGlyph.Up, () => MoveRule(-1)));
+        buttons.Controls.Add(Arrow(ButtonGlyph.Down, () => MoveRule(1)));
         buttons.Controls.Add(Btn("삭제", () => { if (_rules.SelectedItems.Count > 0) { _rules.Items.Remove(_rules.SelectedItems[0]); Commit(); } }, ButtonKind.Danger));
 
         body.Controls.Add(_rules);
@@ -507,20 +556,22 @@ internal sealed class SettingsForm : Form
     }
 
     /// <summary>순서 이동용 좁은 버튼.</summary>
-    private ThemeButton Arrow(string text, Action onClick)
+    private ThemeButton Arrow(ButtonGlyph glyph, Action onClick)
     {
-        var b = Btn(text, onClick, ButtonKind.Quiet);
+        var b = Btn("", onClick, ButtonKind.Quiet, glyph: glyph);
         b.AutoSize = false;
         b.Size = new Size(S(32), S(30));
+        b.AccessibleName = glyph == ButtonGlyph.Up ? "위로" : "아래로";
         return b;
     }
 
-    private ThemeButton Btn(string text, Action onClick, ButtonKind kind, int minWidth = 0)
+    private ThemeButton Btn(string text, Action onClick, ButtonKind kind, int minWidth = 0, ButtonGlyph glyph = ButtonGlyph.None)
     {
         var b = new ThemeButton
         {
             Text = text,
             Kind = kind,
+            Glyph = glyph,
             Font = Font,
             AutoSize = true,
             MinimumSize = new Size(S(minWidth), S(30)),
@@ -554,33 +605,24 @@ internal sealed class SettingsForm : Form
 
     private void RefreshNodeText(TreeNode node)
     {
+        // 항목 글자는 이름만 담는다. 경로·단축키·개수·경로 없음 표시는 목록이 Tag를 읽어 직접 그린다(MultiSelectTree.OnDrawNode).
         var item = (FavoriteItem)node.Tag!;
-        node.ForeColor = Theme.Text;
-        if (item.Separator)
-        {
-            node.Text = "──────────────";
-            node.ForeColor = Theme.Faint;
-            node.ImageIndex = node.SelectedImageIndex = 1;
-        }
-        else if (item.IsGroup)
-        {
-            // 굵은 NodeFont는 TreeView가 글자 폭을 기본 글꼴 기준으로 잡아 잘리므로 색과 개수로 구분
-            node.Text = $"{item.Name ?? "그룹"}    ({item.Items?.Count ?? 0}개)";
-            node.ForeColor = Theme.BlueText;
-            node.ImageIndex = node.SelectedImageIndex = 0;
-        }
-        else
-        {
-            string text = item.Name ?? item.Path ?? "(이름 없음)";
-            if (!string.IsNullOrWhiteSpace(item.Hotkey)) text += $"    {HotkeyParser.Normalize(item.Hotkey) ?? item.Hotkey}";
-            if (!PathCheck.FolderAvailable(item.ExpandedPath))
-            {
-                text += "    (경로 없음)";
-                node.ForeColor = Theme.Red;
-            }
-            node.Text = text;
-            node.ImageIndex = node.SelectedImageIndex = 0;
-        }
+        bool folder = !item.Separator && !item.IsGroup;
+        string text = item.Separator ? "" : item.IsGroup ? (item.Name ?? "그룹") : (item.Name ?? item.Path ?? "(이름 없음)");
+        if (node.Text != text) node.Text = text;
+        node.ImageIndex = node.SelectedImageIndex = item.Separator ? 1 : 0;
+        if (folder && !PathCheck.FolderAvailable(item.ExpandedPath)) _missing.Add(item);
+        else _missing.Remove(item);
+        _tree.Invalidate();
+    }
+
+    private static string DisplayName(FavoriteItem item) =>
+        item.Separator ? "구분선" : item.IsGroup ? (item.Name ?? "그룹") : (string.IsNullOrWhiteSpace(item.Name) ? (item.Path ?? "") : item.Name!);
+
+    /// <summary>저장 버튼은 저장할 변경이 있을 때만 켠다.</summary>
+    private void SyncSave()
+    {
+        if (_saveButton != null && _current != null) _saveButton.Enabled = _current.Data != _savedData;
     }
 
     /// <summary>경로 칸 아래 표시: 문제가 있을 때와 환경변수가 풀린 실제 경로만 보여 준다.</summary>
@@ -593,7 +635,7 @@ internal sealed class SettingsForm : Form
         else if (!PathCheck.FolderAvailable(p)) { _pathState.Text = "폴더를 찾을 수 없습니다."; _pathState.ForeColor = Theme.Red; }
         else _pathState.Text = p != item.Path ? p : "";
         _pathState.Visible = _pathState.Text.Length > 0;
-        _count.Text = FavoriteItem.Flatten(Collect(_tree.Nodes)).Count(i => !i.IsGroup && !i.Separator).ToString();
+        _count.Text = $"폴더 {FavoriteItem.Flatten(Collect(_tree.Nodes)).Count(i => !i.IsGroup && !i.Separator)}개";
     }
 
     private static List<FavoriteItem> Collect(TreeNodeCollection nodes)
@@ -615,11 +657,19 @@ internal sealed class SettingsForm : Form
     private void UpdateFields()
     {
         _loadingFields = true;
-        var item = Selected;
+        int pickedCount = TopNodes(_tree.Picked).Count;
+        bool multi = pickedCount > 1;
+        var item = multi ? null : Selected;
         bool folder = item != null && !item.Separator && !item.IsGroup;
-        _name.Enabled = item != null && !item.Separator;
-        _path.Enabled = folder;
-        _itemHotkey.Enabled = folder;
+
+        // 제목 = 지금 편집하는 대상. 항목 종류에 맞는 칸만 보인다.
+        _heading.Text = multi ? $"{pickedCount}개 항목 선택" : item != null ? DisplayName(item) : "";
+        foreach (var c in _nameRow) c.Visible = item != null && !item.Separator;
+        foreach (var c in _pathRow) c.Visible = folder;
+        foreach (var c in _hotkeyRow) c.Visible = folder;
+        _deleteButton.Visible = item != null;
+        _multiPanel.Visible = multi;
+
         _name.Text = item?.Name ?? "";
         _path.Text = folder ? item!.Path ?? "" : "";
         _itemHotkey.Text = folder ? (HotkeyParser.Normalize(item!.Hotkey) ?? item!.Hotkey ?? "") : "";
@@ -637,6 +687,7 @@ internal sealed class SettingsForm : Form
             item.Hotkey = string.IsNullOrWhiteSpace(_itemHotkey.Text) ? null : _itemHotkey.Text;
         }
         RefreshNodeText(_tree.SelectedNode);
+        _heading.Text = DisplayName(item);
         UpdatePathState(item);
         // 같은 항목·같은 칸을 이어서 입력하면 실행 취소 한 번에 묶는다
         Commit($"{field}:{System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(item)}");
@@ -1140,6 +1191,7 @@ internal sealed class SettingsForm : Form
         _undoKey = key;
         _redo.Clear();
         _current = now;
+        SyncSave();
     }
 
     /// <summary>선택만 바뀐 경우: 되돌렸을 때 그 선택으로 돌아오도록 기준 스냅숏의 선택을 갱신한다.</summary>
@@ -1189,7 +1241,7 @@ internal sealed class SettingsForm : Form
             _menuHotkey.Text = state.Hotkey;
             _middleClick.Checked = state.MiddleClick;
             _showOpen.Checked = state.ShowOpenFolders;
-            _theme.SelectedIndex = Math.Max(0, Array.FindIndex(Theme.All, p => string.Equals(p.Name, state.Theme, StringComparison.OrdinalIgnoreCase)));
+            _theme.Selected = Math.Max(0, Array.FindIndex(Theme.All, p => string.Equals(p.Name, state.Theme, StringComparison.OrdinalIgnoreCase)));
 
             var node = NodeAt(snap.Selection) ?? (_tree.Nodes.Count > 0 ? _tree.Nodes[0] : null);
             _tree.SetPicked(node != null ? new[] { node } : Array.Empty<TreeNode>(), node);
@@ -1201,6 +1253,7 @@ internal sealed class SettingsForm : Form
         {
             _restoring = false;
             _undoKey = null;
+            SyncSave();
         }
     }
 
@@ -1220,7 +1273,7 @@ internal sealed class SettingsForm : Form
 
     private string? _savedData;
 
-    private string SelectedTheme => Theme.All[Math.Clamp(_theme.SelectedIndex, 0, Theme.All.Length - 1)].Name;
+    private string SelectedTheme => Theme.All[Math.Clamp(_theme.Selected, 0, Theme.All.Length - 1)].Name;
 
     /// <summary>검사 후 저장한다. 창은 닫지 않는다. 검사 실패·저장 실패면 false.</summary>
     private bool Save()
@@ -1273,7 +1326,9 @@ internal sealed class SettingsForm : Form
         foreach (var node in _tree.AllNodes()) RefreshNodeText(node);
         UpdateFields();
         Commit();
-        _savedData = TakeSnapshot().Data;
+        _current = TakeSnapshot();
+        _savedData = _current.Data;
+        SyncSave();
         _status.ForeColor = Theme.Muted;
         _status.Text = "저장했습니다.";
         return true;

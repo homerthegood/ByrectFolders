@@ -19,6 +19,8 @@ internal sealed class Palette
     public Color PrimaryTop, PrimaryMid, PrimaryBottom, PrimaryHoverTop, PrimaryHoverMid, PrimaryHoverBottom, PrimaryEdge;
     public Color Red, RedSoft, RedEdge, Green, Pick, Aqua, Mint, TitleBar, TitleText;
     public int TileRadius, ButtonRadius, InputRadius, TabRadius, TileShadow;
+    // 보조 패널, 목록 행(선택·가리킴), 가는 구분선, 단축키 표시(키캡)
+    public Color TileQuiet, RowSelTop, RowSelBottom, RowSelEdge, RowHover, Hairline, KeyFill, KeyEdge, SwitchOff;
 }
 
 /// <summary>
@@ -45,6 +47,8 @@ internal static class Theme
         Red = Hex(0xd92d33), RedSoft = Hex(0xfff1f1), RedEdge = Hex(0xffd3d5), Green = Hex(0x0e8a43),
         Pick = Hex(0xd4e6ff), Aqua = Hex(0x1a7cff), Mint = Hex(0x1a7cff), TitleBar = Hex(0xe7e7e9), TitleText = Hex(0x111114),
         TileRadius = 16, ButtonRadius = 10, InputRadius = 10, TabRadius = 14, TileShadow = 0,
+        TileQuiet = Hex(0xf4f4f6), RowSelTop = Hex(0xeaf3ff), RowSelBottom = Hex(0xeaf3ff), RowSelEdge = Hex(0xcfe3ff), RowHover = Hex(0xf5f5f7),
+        Hairline = Hex(0xececee), KeyFill = Color.White, KeyEdge = Hex(0xdcdce0), SwitchOff = Hex(0xd4d4d9),
     };
 
     public static readonly Palette Aero = new()
@@ -62,6 +66,8 @@ internal static class Theme
         Red = Hex(0xc23b3b), RedSoft = Hex(0xfff1f1), RedEdge = Hex(0xf3c4c4), Green = Hex(0x22c55e),
         Pick = Hex(0xd6ecfa), Aqua = Hex(0x6cc6ec), Mint = Hex(0x7fd8b4), TitleBar = Hex(0xd4e7f3), TitleText = Hex(0x1f3a4d),
         TileRadius = 20, ButtonRadius = 12, InputRadius = 12, TabRadius = 16, TileShadow = 5,
+        TileQuiet = Hex(0xeef6fb), RowSelTop = Hex(0xe6f5fd), RowSelBottom = Hex(0xd3ecfa), RowSelEdge = Hex(0xa9d6f0), RowHover = Hex(0xedf6fc),
+        Hairline = Hex(0xd7e8f2), KeyFill = Color.White, KeyEdge = Hex(0xc4dcea), SwitchOff = Hex(0xc9dbe7),
     };
 
     public static readonly Palette[] All = { Aero, Light };
@@ -135,6 +141,9 @@ internal static class Theme
     }
 
     public static Font UiFont(float size = 9.5f) => new(Family, size, FontStyle.Regular, GraphicsUnit.Point);
+
+    /// <summary>경로·보조 정보용 가는 글꼴(맑은 고딕 Regular). 굵고 둥근 UI 글꼴과 굵기로 대비를 준다.</summary>
+    public static Font DataFont(float size = 9f) => new("맑은 고딕", size, FontStyle.Regular, GraphicsUnit.Point);
 
     // ───────── 공통 적용 ─────────
 
@@ -404,11 +413,22 @@ internal static class Kit
 /// </summary>
 internal class TilePanel : Panel
 {
+    private bool _quiet;
+
     public TilePanel()
     {
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.UserPaint, true);
         BackColor = Theme.Tile;
     }
+
+    /// <summary>보조 패널: 그림자 없이 한 단계 옅은 바탕. 주 패널(목록)보다 뒤로 물러나 보이게 한다.</summary>
+    public bool Quiet
+    {
+        get => _quiet;
+        set { _quiet = value; BackColor = Fill; Invalidate(); }
+    }
+
+    public Color Fill => _quiet ? Theme.P.TileQuiet : Theme.Tile;
 
     public static int ShadowPad(Control c) => Theme.Scale(c, Theme.P.TileShadow);
 
@@ -423,13 +443,13 @@ internal class TilePanel : Panel
         if (!Theme.Glass)
         {
             using var path = Theme.Round(rect, radius);
-            using var b = new SolidBrush(Theme.Tile);
+            using var b = new SolidBrush(Fill);
             g.FillPath(b, path);
             return;
         }
 
-        // 그림자: 아래로 조금 내려 여러 겹으로 옅게
-        for (int i = sh; i >= 1; i--)
+        // 그림자: 아래로 조금 내려 여러 겹으로 옅게(보조 패널은 그림자 없음)
+        for (int i = _quiet ? 0 : sh; i >= 1; i--)
         {
             var r = rect;
             r.Inflate(i * 0.8f, i * 0.8f);
@@ -440,7 +460,7 @@ internal class TilePanel : Panel
         }
         using (var path = Theme.Round(rect, radius))
         {
-            using var b = new SolidBrush(Theme.Tile);
+            using var b = new SolidBrush(Fill);
             g.FillPath(b, path);
             using var ring = new Pen(Theme.P.TileRing);
             g.DrawPath(ring, path);
@@ -480,34 +500,19 @@ internal class CanvasTable : TableLayoutPanel
     protected override void OnPaintBackground(PaintEventArgs e) => Theme.PaintCanvas(e.Graphics, this);
 }
 
-/// <summary>제목 앞 강조 막대(Aero): 아쿠아→민트 가로 그라데이션 알약.</summary>
-internal sealed class AccentBar : Control
-{
-    public AccentBar()
-    {
-        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
-        TabStop = false;
-    }
-
-    protected override void OnPaint(PaintEventArgs e)
-    {
-        var g = e.Graphics;
-        Theme.ClearParent(g, this);
-        g.SmoothingMode = SmoothingMode.AntiAlias;
-        var r = new RectangleF(0, 0, Width - 1, Height - 1);
-        using var path = Theme.Round(r, Height / 2f);
-        using var b = new LinearGradientBrush(new RectangleF(-1, 0, Width + 2, Height), Theme.P.Aqua, Theme.P.Mint, LinearGradientMode.Horizontal);
-        g.FillPath(b, path);
-    }
-}
-
 internal enum ButtonKind { Normal, Primary, Quiet, Danger }
+
+/// <summary>버튼에 그리는 작은 선 아이콘. 글리프 문자(▲▼＋) 대신 직접 그려 굵기·크기를 글자와 맞춘다.</summary>
+internal enum ButtonGlyph { None, Plus, Up, Down, CaretDown, Help }
 
 /// <summary>둥근 버튼. Normal=흰 바탕+테두리, Primary=파란 바탕(Aero는 그라데이션), Quiet=투명, Danger=연한 빨강.</summary>
 internal sealed class ThemeButton : Button
 {
     private bool _hover, _down;
     public ButtonKind Kind { get; set; }
+
+    /// <summary>글자 앞(CaretDown은 글자 뒤)에 그리는 아이콘. 글자가 없으면 아이콘만 가운데에 그린다.</summary>
+    public ButtonGlyph Glyph { get; set; }
 
     public ThemeButton()
     {
@@ -522,7 +527,10 @@ internal sealed class ThemeButton : Button
     protected override void OnMouseLeave(EventArgs e) { _hover = false; _down = false; Invalidate(); base.OnMouseLeave(e); }
     protected override void OnMouseDown(MouseEventArgs e) { _down = true; Invalidate(); base.OnMouseDown(e); }
     protected override void OnMouseUp(MouseEventArgs e) { _down = false; Invalidate(); base.OnMouseUp(e); }
-    protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
+    protected override void OnEnabledChanged(EventArgs e) { Cursor = Enabled ? Cursors.Hand : Cursors.Default; Invalidate(); base.OnEnabledChanged(e); }
+
+    private int GlyphSize => Theme.Scale(this, Glyph == ButtonGlyph.Help ? 16 : 10);
+    private int GlyphGap => Theme.Scale(this, 7);
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -531,7 +539,7 @@ internal sealed class ThemeButton : Button
         g.SmoothingMode = SmoothingMode.AntiAlias;
 
         var p = Theme.P;
-        bool hot = _hover || _down;
+        bool hot = Enabled && (_hover || _down);
         Color top, bottom, edge, text;
         Color? mid = null;
         bool fill = true;
@@ -564,6 +572,14 @@ internal sealed class ThemeButton : Button
                 text = p.Ink;
                 break;
         }
+        if (!Enabled && Kind == ButtonKind.Primary)
+        {
+            // 누를 일이 없는 기본 버튼(저장할 변경 없음): 색을 빼고 평평하게
+            top = bottom = p.Glass ? p.ButtonBottom : p.Inset;
+            mid = null;
+            edge = p.ButtonEdge;
+            text = p.Faint;
+        }
 
         var rect = new RectangleF(0.5f, 0.5f, Width - 1.5f, Height - 1.5f);
         float radius = Theme.Scale(this, p.ButtonRadius);
@@ -574,7 +590,7 @@ internal sealed class ThemeButton : Button
                 g.FillPath(b, path);
             using var pen = new Pen(edge);
             g.DrawPath(pen, path);
-            if (p.Glass && Kind == ButtonKind.Primary)
+            if (p.Glass && Kind == ButtonKind.Primary && Enabled)
             {
                 // 위쪽 안쪽 하이라이트(유리 광택)
                 var hi = rect;
@@ -594,15 +610,122 @@ internal sealed class ThemeButton : Button
             g.DrawPath(pen, path);
         }
 
-        var color = Enabled ? text : Color.FromArgb(102, text);
-        TextRenderer.DrawText(g, Text, Font, ClientRectangle, color,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
+        var color = Enabled || Kind == ButtonKind.Primary ? text : Color.FromArgb(110, text);
+        const TextFormatFlags flags = TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding;
+        if (Glyph == ButtonGlyph.None)
+        {
+            TextRenderer.DrawText(g, Text, Font, ClientRectangle, color, flags | TextFormatFlags.HorizontalCenter);
+            return;
+        }
+
+        // 아이콘 + 글자를 한 덩어리로 가운데 정렬
+        int gs = GlyphSize, textW = Text.Length == 0 ? 0 : TextRenderer.MeasureText(g, Text, Font, Size.Empty, flags).Width;
+        int total = gs + (textW > 0 ? GlyphGap + textW : 0);
+        int x = (Width - total) / 2, cy = Height / 2;
+        bool after = Glyph == ButtonGlyph.CaretDown;
+        int glyphX = after ? x + textW + (textW > 0 ? GlyphGap : 0) : x;
+        int textX = after ? x : x + gs + GlyphGap;
+        if (textW > 0)
+            TextRenderer.DrawText(g, Text, Font, new Rectangle(textX, 0, textW + 2, Height), color, flags);
+        DrawGlyph(g, Glyph, new RectangleF(glyphX, cy - gs / 2f, gs, gs), color, Theme.Scale(this, 100) / 100f);
+    }
+
+    internal static void DrawGlyph(Graphics g, ButtonGlyph glyph, RectangleF r, Color color, float scale)
+    {
+        using var pen = new Pen(color, 1.7f * scale) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+        float cx = r.X + r.Width / 2, cy = r.Y + r.Height / 2, h = r.Width / 2;
+        switch (glyph)
+        {
+            case ButtonGlyph.Plus:
+                g.DrawLine(pen, cx - h, cy, cx + h, cy);
+                g.DrawLine(pen, cx, cy - h, cx, cy + h);
+                break;
+            case ButtonGlyph.Up:
+                g.DrawLines(pen, new[] { new PointF(cx - h, cy + h * 0.45f), new PointF(cx, cy - h * 0.55f), new PointF(cx + h, cy + h * 0.45f) });
+                break;
+            case ButtonGlyph.Down:
+                g.DrawLines(pen, new[] { new PointF(cx - h, cy - h * 0.45f), new PointF(cx, cy + h * 0.55f), new PointF(cx + h, cy - h * 0.45f) });
+                break;
+            case ButtonGlyph.CaretDown:
+                g.DrawLines(pen, new[] { new PointF(cx - h * 0.7f, cy - h * 0.3f), new PointF(cx, cy + h * 0.4f), new PointF(cx + h * 0.7f, cy - h * 0.3f) });
+                break;
+            case ButtonGlyph.Help:
+            {
+                // 원 안의 물음표: 선으로 직접 그린다(작은 크기에서 글꼴보다 또렷함)
+                float rad = h - 0.5f * scale;
+                using var thin = new Pen(color, 1.4f * scale);
+                g.DrawEllipse(thin, cx - rad, cy - rad, rad * 2, rad * 2);
+                float q = rad * 0.42f;
+                g.DrawArc(pen, cx - q, cy - q * 1.55f, q * 2, q * 2, 180, 270);
+                g.DrawLine(pen, cx, cy + q * 0.45f, cx, cy + q * 0.6f);
+                using var dot = new SolidBrush(color);
+                float d = 1.0f * scale;
+                g.FillEllipse(dot, cx - d, cy + q * 1.25f - d, d * 2, d * 2);
+                break;
+            }
+        }
     }
 
     public override Size GetPreferredSize(Size proposedSize)
     {
         var t = TextRenderer.MeasureText(Text, Font, Size.Empty, TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix);
-        return new Size(Math.Max(t.Width + Theme.Scale(this, Kind == ButtonKind.Quiet ? 14 : 22), MinimumSize.Width), Math.Max(t.Height + Theme.Scale(this, 10), MinimumSize.Height));
+        int glyph = Glyph == ButtonGlyph.None ? 0 : GlyphSize + (Text.Length > 0 ? GlyphGap : 0);
+        return new Size(Math.Max(t.Width + glyph + Theme.Scale(this, Kind == ButtonKind.Quiet ? 14 : 22), MinimumSize.Width), Math.Max(t.Height + Theme.Scale(this, 10), MinimumSize.Height));
+    }
+}
+
+/// <summary>켬/끔 스위치. CheckBox를 그대로 쓰되(Checked, CheckedChanged, 키보드 Space) 모양만 알약형 스위치로 그린다.</summary>
+internal sealed class ToggleSwitch : CheckBox
+{
+    private bool _hover;
+
+    public ToggleSwitch()
+    {
+        SetStyle(ControlStyles.UserPaint | ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
+        AutoSize = false;
+        Cursor = Cursors.Hand;
+        Text = "";
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        Size = new Size(Theme.Scale(this, 42), Theme.Scale(this, 24));
+    }
+
+    protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        var p = Theme.P;
+        Theme.ClearParent(g, this);
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        var track = new RectangleF(1, 1, Width - 3, Height - 3);
+        using (var path = Theme.Round(track, track.Height / 2))
+        {
+            if (Checked)
+            {
+                using var b = Theme.Vertical(track, _hover ? p.PrimaryHoverTop : p.PrimaryTop, _hover ? p.PrimaryHoverBottom : p.PrimaryBottom, _hover ? p.PrimaryHoverMid : p.PrimaryMid, 0.55f);
+                g.FillPath(b, path);
+            }
+            else
+            {
+                using var b = new SolidBrush(p.SwitchOff);
+                g.FillPath(b, path);
+            }
+            if (Focused && ShowFocusCues)
+            {
+                using var ring = new Pen(p.Focus, 2f);
+                g.DrawPath(ring, path);
+            }
+        }
+        float d = track.Height - 6;
+        float x = Checked ? track.Right - d - 3 : track.X + 3;
+        using var shadow = new SolidBrush(Color.FromArgb(40, 20, 60, 100));
+        g.FillEllipse(shadow, x, track.Y + 4, d, d);
+        g.FillEllipse(Brushes.White, x, track.Y + 3, d, d);
     }
 }
 

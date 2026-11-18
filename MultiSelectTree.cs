@@ -51,6 +51,194 @@ internal sealed class MultiSelectTree : TreeView
     public MultiSelectTree()
     {
         _scroll.Tick += (_, _) => AutoScrollTick();
+        DrawMode = TreeViewDrawMode.OwnerDrawAll;
+    }
+
+    // ───────── 행 직접 그리기 ─────────
+    // 한 행에 이름 · 경로 · 단축키를 함께 보여 준다(이름: 굵은 UI 글꼴, 경로: 가는 글꼴, 단축키: 키캡).
+    // 선택은 둥근 강조로, 편집 칸에 표시 중인 주 항목은 왼쪽 강조 막대로 구분한다.
+    // 항목 글자(node.Text)는 이름만 담고 나머지는 Tag(FavoriteItem)에서 읽어 그린다.
+
+    /// <summary>경로를 찾을 수 없는 항목인지(그릴 때마다 디스크를 확인하지 않도록 바깥에서 관리).</summary>
+    public Func<TreeNode, bool>? IsMissing { get; set; }
+
+    private TreeNode? _hot;
+    private Font? _dataFont, _smallFont;
+
+    private int S(int v) => Theme.Scale(this, v);
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var cp = base.CreateParams;
+            cp.Style |= 0x8000; // TVS_NOHSCROLL: 가로 스크롤 없음(긴 경로는 말줄임)
+            return cp;
+        }
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        SendMessage(Handle, 0x112C, 0x0004, (IntPtr)0x0004); // TVM_SETEXTENDEDSTYLE: TVS_EX_DOUBLEBUFFER(깜빡임 방지)
+    }
+
+    private void InvalidateRow(TreeNode? n)
+    {
+        if (n == null || n.TreeView != this) return;
+        var b = n.Bounds;
+        if (b.Height > 0) Invalidate(new Rectangle(0, b.Top, ClientSize.Width, ItemHeight));
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        var n = GetNodeAt(e.Location);
+        if (n != _hot)
+        {
+            InvalidateRow(_hot);
+            _hot = n;
+            InvalidateRow(_hot);
+        }
+        base.OnMouseMove(e);
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        InvalidateRow(_hot);
+        _hot = null;
+        base.OnMouseLeave(e);
+    }
+
+    protected override void OnDrawNode(DrawTreeNodeEventArgs e)
+    {
+        var node = e.Node;
+        if (node == null) return;
+        var nb = node.Bounds;
+        if (nb.Height <= 0) return; // 화면 밖
+
+        var g = e.Graphics;
+        var p = Theme.P;
+        int w = ClientSize.Width, h = ItemHeight;
+        var row = new Rectangle(0, nb.Top, w, h);
+        using (var back = new SolidBrush(BackColor)) g.FillRectangle(back, row);
+        g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+
+        var item = node.Tag as FavoriteItem;
+        bool picked = _picked.Contains(node), primary = node == SelectedNode;
+        bool selected = picked || primary;
+
+        // 선택·가리킴 바탕
+        var pill = new RectangleF(S(2), row.Top + 1, w - S(4) - 1, h - 2);
+        if (selected)
+        {
+            using var path = Theme.Round(pill, S(8));
+            using (var b = Theme.Vertical(pill, p.RowSelTop, p.RowSelBottom)) g.FillPath(b, path);
+            using var edge = new Pen(p.RowSelEdge);
+            g.DrawPath(edge, path);
+            if (primary)
+            {
+                // 주 항목 표시: 강조 바탕의 왼쪽 가장자리를 따라 붙는 띠(둥근 모서리에 맞춰 잘라 낸다)
+                var bar = new RectangleF(pill.X, pill.Y, S(4), pill.Height);
+                var clip = g.Clip;
+                g.SetClip(path, System.Drawing.Drawing2D.CombineMode.Intersect);
+                using (var barBrush = Theme.Vertical(bar, p.Aqua, p.Mint)) g.FillRectangle(barBrush, bar);
+                g.Clip = clip;
+            }
+        }
+        else if (node == _hot)
+        {
+            using var path = Theme.Round(pill, S(8));
+            using var b = new SolidBrush(p.RowHover);
+            g.FillPath(b, path);
+        }
+
+        int imgW = ImageList?.ImageSize.Width ?? S(16), imgH = ImageList?.ImageSize.Height ?? S(16);
+        int iconX = nb.X - imgW - S(4), midY = row.Top + h / 2;
+
+        // 구분선: 가는 줄 하나
+        if (item is { Separator: true })
+        {
+            using var line = new Pen(p.KeyEdge);
+            g.DrawLine(line, iconX, midY, w - S(14), midY);
+            return;
+        }
+
+        // 펼침 화살표(그룹)
+        if (node.Nodes.Count > 0)
+        {
+            float cx = iconX - Indent / 2f + S(3), c = S(4); // 왼쪽 강조 띠와 겹치지 않게 조금 오른쪽
+            using var pen = new Pen(p.Muted, 1.6f * S(100) / 100f) { StartCap = System.Drawing.Drawing2D.LineCap.Round, EndCap = System.Drawing.Drawing2D.LineCap.Round, LineJoin = System.Drawing.Drawing2D.LineJoin.Round };
+            if (node.IsExpanded)
+                g.DrawLines(pen, new[] { new PointF(cx - c, midY - c * 0.5f), new PointF(cx, midY + c * 0.5f), new PointF(cx + c, midY - c * 0.5f) });
+            else
+                g.DrawLines(pen, new[] { new PointF(cx - c * 0.5f, midY - c), new PointF(cx + c * 0.5f, midY), new PointF(cx - c * 0.5f, midY + c) });
+        }
+
+        if (ImageList != null && node.ImageIndex >= 0 && node.ImageIndex < ImageList.Images.Count)
+            ImageList.Draw(g, iconX, midY - imgH / 2, node.ImageIndex);
+
+        const TextFormatFlags flags = TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine | TextFormatFlags.NoPrefix | TextFormatFlags.NoPadding;
+        _dataFont ??= Theme.DataFont(9f);
+        _smallFont ??= Theme.UiFont(8.25f);
+
+        // 단축키 키캡(오른쪽 끝)
+        int right = w - S(12);
+        string? hotkey = item is { IsGroup: false } && !string.IsNullOrWhiteSpace(item.Hotkey) ? (HotkeyParser.Normalize(item.Hotkey) ?? item.Hotkey) : null;
+        if (hotkey != null)
+        {
+            int kw = TextRenderer.MeasureText(g, hotkey, _smallFont, Size.Empty, flags).Width + S(14), kh = S(20);
+            var key = new RectangleF(right - kw, midY - kh / 2f, kw, kh);
+            using (var under = Theme.Round(new RectangleF(key.X, key.Y + 1.5f, key.Width, key.Height), S(6)))
+            using (var ub = new SolidBrush(p.KeyEdge))
+                g.FillPath(ub, under); // 아래쪽 두께(키캡 느낌)
+            using (var path = Theme.Round(key, S(6)))
+            {
+                using var kb = new SolidBrush(p.KeyFill);
+                g.FillPath(kb, path);
+                using var kp = new Pen(p.KeyEdge);
+                g.DrawPath(kp, path);
+            }
+            TextRenderer.DrawText(g, hotkey, _smallFont, Rectangle.Round(key), p.Muted, flags | TextFormatFlags.HorizontalCenter);
+            right = (int)key.X - S(10);
+        }
+
+        // 이름
+        int nameX = nb.X + S(2);
+        int nameW = TextRenderer.MeasureText(g, node.Text, Font, Size.Empty, flags).Width;
+        if (!node.IsEditing)
+            TextRenderer.DrawText(g, node.Text, Font, new Rectangle(nameX, row.Top, Math.Max(0, right - nameX), h), p.Ink, flags | TextFormatFlags.EndEllipsis);
+        int afterName = nameX + nameW;
+
+        // 그룹: 안에 든 항목 수
+        if (item is { IsGroup: true })
+        {
+            string count = (item.Items?.Count ?? node.Nodes.Count).ToString();
+            int cw = Math.Max(S(20), TextRenderer.MeasureText(g, count, _smallFont, Size.Empty, flags).Width + S(12)), ch = S(18);
+            var chip = new RectangleF(afterName + S(8), midY - ch / 2f, cw, ch);
+            if (chip.Right < right)
+            {
+                using var path = Theme.Round(chip, ch / 2f);
+                using var cb = new SolidBrush(selected ? Color.White : p.BlueSoft);
+                g.FillPath(cb, path);
+                TextRenderer.DrawText(g, count, _smallFont, Rectangle.Round(chip), p.BlueText, flags | TextFormatFlags.HorizontalCenter);
+            }
+            return;
+        }
+
+        // 경로(가는 글꼴, 같은 열에 맞춰 훑어보기 쉽게)
+        if (item?.Path is { Length: > 0 } pathText)
+        {
+            int colX = Math.Max(afterName + S(18), (int)(w * 0.42));
+            bool missing = IsMissing?.Invoke(node) == true;
+            if (missing)
+            {
+                using var dot = new SolidBrush(p.Red);
+                g.FillEllipse(dot, colX, midY - S(3), S(6), S(6));
+                colX += S(11);
+            }
+            if (right - colX > S(48))
+                TextRenderer.DrawText(g, pathText, _dataFont, new Rectangle(colX, row.Top - S(1), right - colX, h), missing ? p.Red : p.Muted, flags | TextFormatFlags.PathEllipsis); // 글꼴이 달라 생기는 기준선 차이 보정
+        }
     }
 
     /// <summary>선택된 항목(트리 순서).</summary>
@@ -86,10 +274,9 @@ internal sealed class MultiSelectTree : TreeView
     public void SetPicked(IEnumerable<TreeNode> nodes, TreeNode? primary)
     {
         var set = nodes.Where(n => n != null && n.TreeView == this).ToHashSet();
-        foreach (var old in _picked.Where(n => !set.Contains(n)).ToList()) old.BackColor = Color.Empty;
         _picked.Clear();
         _picked.UnionWith(set);
-        foreach (var n in _picked) n.BackColor = _picked.Count > 1 ? PickColor : Color.Empty;
+        Invalidate(); // 선택 표시는 OnDrawNode에서 직접 그린다
         if (primary != null && primary.TreeView == this && SelectedNode != primary)
         {
             _syncing = true;
@@ -404,7 +591,12 @@ internal sealed class MultiSelectTree : TreeView
 
     protected override void Dispose(bool disposing)
     {
-        if (disposing) _scroll.Dispose();
+        if (disposing)
+        {
+            _scroll.Dispose();
+            _dataFont?.Dispose();
+            _smallFont?.Dispose();
+        }
         base.Dispose(disposing);
     }
 
