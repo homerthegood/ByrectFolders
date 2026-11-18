@@ -1,6 +1,6 @@
 # Byrect Folders
 
-Direct Folders(Code Sector) 대체를 목표로 한 트레이 상주 즐겨찾기 폴더 메뉴. (v0.4.0)
+Direct Folders(Code Sector) 대체를 목표로 한 트레이 상주 즐겨찾기 폴더 메뉴. (v0.5.0)
 
 이전 이름은 DirectFolders. 코드 폴더·프로젝트·네임스페이스 이름은 그대로 두었고, exe·설정 폴더·설치 항목·자동 시작 이름만 바꿨다(`AppInfo.cs`).
 
