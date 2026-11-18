@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWindowsForms>true</UseWindowsForms>
+    <UseWPF>true</UseWPF>
+    <Version>0.4.0</Version>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>ByrectFolders</AssemblyName>
+    <Product>Byrect Folders</Product>
+    <AssemblyTitle>Byrect Folders</AssemblyTitle>
+    <RootNamespace>DirectFolders</RootNamespace>
+    <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- UI 글꼴(나눔스퀘어라운드 Bold, SIL OFL 1.1). exe에 포함해 설치 없이 사용 -->
+    <EmbeddedResource Include="Assets\NanumSquareRoundB.ttf" LogicalName="NanumSquareRoundB.ttf" />
+    <None Include="Assets\NOTICE-NanumSquareRound.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" ExcludeFromSingleFile="true" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,8 @@
+NanumSquareRound Bold (NanumSquareRoundB.ttf)
+Copyright (c) 2017 NAVER Corporation. All rights reserved.
+Font designed by Sandoll Communications Inc.
+
+나눔글꼴은 SIL Open Font License 1.1에 따라 배포됩니다.
+라이선스 원문: https://openfontlicense.org/open-font-license-official-text/
+나눔글꼴 라이선스 안내: https://help.naver.com/service/30016/contents/18088
+이 앱은 글꼴 파일을 수정하지 않고 UI 표시용으로 함께 배포하며, 글꼴 자체를 단독 판매하지 않습니다.
